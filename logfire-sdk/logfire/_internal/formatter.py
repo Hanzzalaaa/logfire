@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import os
 import types
 from collections.abc import Iterator
 from functools import lru_cache
@@ -17,6 +18,11 @@ from .ast_utils import CallNodeFinder, get_node_source_text
 from .scrubbing import NOOP_SCRUBBER, BaseScrubber, MessageValueCleaner
 from .stack_info import warn_at_user_stacklevel
 from .utils import log_internal_error
+
+# Real directory of this logfire install, with a trailing separator so a sibling
+# such as `logfire_extra` does not match. `realpath` resolves symlinks, so the
+# same check works for a site-packages install and an editable install.
+_LOGFIRE_PACKAGE_DIR = os.path.normcase(os.path.realpath(os.path.dirname(logfire.__file__))) + os.sep
 
 
 class LiteralChunk(TypedDict):
@@ -70,6 +76,10 @@ class ChunksFormatter(Formatter):
         frame = frame.f_back  # pyright: ignore[reportAssignmentType]
         # Now `frame` is the frame where the user called a logfire method.
         assert frame is not None
+
+        if os.path.normcase(os.path.realpath(frame.f_code.co_filename)).startswith(_LOGFIRE_PACKAGE_DIR):
+            # Logfire's own calls never use f-string templates, so don't parse logfire's source to check.
+            return None
 
         node_finder = FormattingCallNodeFinder(frame)
         call_node = node_finder.node

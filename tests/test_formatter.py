@@ -1,9 +1,10 @@
 import contextlib
 from collections import ChainMap
 from collections.abc import Mapping
-from types import SimpleNamespace
+from types import FrameType, SimpleNamespace
 from typing import Any
 
+import executing
 import pytest
 from inline_snapshot import snapshot
 
@@ -256,3 +257,27 @@ async def test_await_in_fstring(exporter: TestExporter):
             }
         ]
     )
+
+
+def test_variable_get_skips_fstring_inspection(exporter: TestExporter, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Internal span calls must not parse logfire's own source to look for f-strings.
+
+    User f-strings still go through `executing` so the message template keeps its placeholders.
+    """
+    parsed: list[str] = []
+    original = executing.Source.for_frame.__func__
+
+    def spy(cls: type[executing.Source], frame: FrameType, *args: Any, **kwargs: Any) -> executing.Source:
+        parsed.append(frame.f_code.co_filename)
+        return original(cls, frame, *args, **kwargs)
+
+    monkeypatch.setattr(executing.Source, 'for_frame', classmethod(spy))
+
+    flag = logfire.var('my_flag', type=bool, default=False)
+    assert flag.get().value is False
+    assert parsed == []
+
+    name = 'world'
+    logfire.info(f'hello {name}')
+    assert parsed == [__file__]
+    assert exporter.exported_spans_as_dict()[-1]['attributes']['logfire.msg_template'] == 'hello {name}'
